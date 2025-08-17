@@ -31,11 +31,25 @@ try:
     print(f"📊 Response status: {response.status_code}")
     print(f"📏 Page size: {len(response.text)} characters")
     
+    # Debug: Check what we actually got
+    print("🔍 First 500 characters of response:")
+    print(response.text[:500])
+    print("\n🔍 Last 200 characters of response:")
+    print(response.text[-200:])
+    
     # Check if we got the right page
     if "delivery" in response.text.lower() and "nifty" in response.text.lower():
         print("✅ Successfully reached Moneycontrol delivery page")
     else:
         print("⚠️ Warning: Page content may not be as expected")
+        
+    # Check for common blocking indicators
+    if "access denied" in response.text.lower():
+        print("🚫 Access denied - website is blocking us")
+    elif "captcha" in response.text.lower():
+        print("🚫 Captcha detected - website is blocking us")
+    elif len(response.text) < 5000:
+        print("⚠️ Page seems too short - might be redirected or blocked")
     
     # Parse tables from the HTML content
     df_list = pd.read_html(StringIO(response.text))
