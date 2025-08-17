@@ -1,0 +1,37 @@
+name: Daily Python Script
+
+on:
+  schedule:
+    - cron: '30 15 * * *'  # Runs at 9:00 PM IST every day
+  workflow_dispatch:  # Lets you run it manually for testing
+
+jobs:
+  run-script:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # Step 1: Get your code
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    # Step 2: Set up Python
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    # Step 3: Install packages your script needs
+    - name: Install dependencies
+      run: |
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        else
+          echo "No requirements.txt found"
+        fi
+    
+    # Step 4: Run your script
+    - name: Run my script
+      run: |
+        echo "Starting script at $(date)"
+        python Delivery.py
+        echo "Script finished at $(date)"
