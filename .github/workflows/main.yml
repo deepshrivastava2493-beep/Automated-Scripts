@@ -1,37 +1,33 @@
-name: Daily Python Script
+name: Daily Stock Delivery Alert
 
 on:
   schedule:
-    - cron: '30 15 * * *'  # Runs at 9:00 PM IST every day
-  workflow_dispatch:  # Lets you run it manually for testing
+    - cron: '30 15 * * *'  # 9:00 PM IST daily
+  workflow_dispatch:  # Manual testing
 
 jobs:
-  run-script:
+  send-delivery-alert:
     runs-on: ubuntu-latest
     
     steps:
-    # Step 1: Get your code
     - name: Checkout code
       uses: actions/checkout@v4
     
-    # Step 2: Set up Python
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
+        cache: 'pip'
     
-    # Step 3: Install packages your script needs
     - name: Install dependencies
       run: |
-        if [ -f requirements.txt ]; then
-          pip install -r requirements.txt
-        else
-          echo "No requirements.txt found"
-        fi
+        pip install --upgrade pip
+        pip install -r requirements.txt
     
-    # Step 4: Run your script
-    - name: Run my script
+    - name: Run delivery script
+      env:
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       run: |
-        echo "Starting script at $(date)"
+        echo "🚀 Starting delivery alert script..."
         python Delivery.py
-        echo "Script finished at $(date)"
+        echo "✅ Script execution completed"
