@@ -8,7 +8,7 @@ from io import StringIO
 import os
 import time
 import numpy as np
-from google.colab import userdata
+#from google.colab import userdata
 
 # ========= STEP 1: READ TABLE WITH HEADERS =========
 url = "https://www.moneycontrol.com/india/stockmarket/stock-deliverables/marketstatistics/indices/nifty-500-7.html"
