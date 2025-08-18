@@ -370,7 +370,7 @@ except Exception as e:
 sender = "deepshrivastava2493@gmail.com"
 receivers = [
     "rockingdeep69@gmail.com"
-#,    "akhileshekka@gmail.com"
+,    "akhileshekka@gmail.com"
 ]
 
 # Get app password from environment variable (GitHub Secret)
