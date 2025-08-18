@@ -1,1 +1,1 @@
-setup to run pyhton script
+setup to run python script
