@@ -114,8 +114,8 @@ print(display_message)
 # ========= STEP 5: SEND EMAIL =========
 sender = "deepshrivastava2493@gmail.com"
 receivers = [
-    "rockingdeep69@gmail.com",
-    "akhileshekka@gmail.com"
+    "rockingdeep69@gmail.com"
+    #,"akhileshekka@gmail.com"
 ]
 
 # Get app password from environment variable (GitHub Secret)
