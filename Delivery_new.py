@@ -44,6 +44,7 @@ def main():
 
         # Add retry mechanism
         max_retries = 3
+        response = None
         for attempt in range(max_retries):
             try:
                 logger.info(f"🔍 Attempt {attempt + 1}: Fetching data from Moneycontrol...")
@@ -59,7 +60,15 @@ def main():
         logger.info(f"📊 Response status: {response.status_code}")
         logger.info(f"📏 Page size: {len(response.text)} characters")
 
+        # Validate response content
+        if len(response.text) < 5000:
+            raise ValueError("Page content too short - might be blocked or redirected")
+        
+        if "access denied" in response.text.lower() or "captcha" in response.text.lower():
+            raise ValueError("Access blocked by website")
+
         # Parse HTML tables
+        df = None
         try:
             df_list = pd.read_html(StringIO(response.text))
             if not df_list:
@@ -70,22 +79,42 @@ def main():
             logger.error(f"❌ Error parsing HTML tables: {e}")
             # Try alternative parsing
             logger.info("🔄 Trying alternative table parsing...")
-            df_list = pd.read_html(response.text, attrs={'class': 'tbldata14'})
-            if df_list:
-                df = df_list[0]
-                logger.info(f"✅ Alternative parsing successful with {len(df)} rows")
-            else:
+            try:
+                df_list = pd.read_html(response.text, attrs={'class': 'tbldata14'})
+                if df_list:
+                    df = df_list[0]
+                    logger.info(f"✅ Alternative parsing successful with {len(df)} rows")
+            except:
+                # Try basic parsing
+                try:
+                    df_list = pd.read_html(response.text, header=0)
+                    if df_list:
+                        df = df_list[0]
+                        logger.info(f"✅ Basic parsing successful with {len(df)} rows")
+                except:
+                    pass
+            
+            if df is None:
                 raise RuntimeError(f"❌ Could not parse any tables from the page")
 
         # ========= STEP 2: CLEAN DATA =========
-        df.columns = [col.strip() for col in df.columns]
+        df.columns = [str(col).strip() for col in df.columns]
         
         # Handle different possible column names
         delivery_col = None
-        for col in df.columns:
-            if 'dely' in col.lower() or 'delivery' in col.lower():
-                delivery_col = col
+        possible_names = ['Dely %', 'Delivery %', 'Del %', 'Delivery', 'DELY %']
+        
+        for col_name in possible_names:
+            if col_name in df.columns:
+                delivery_col = col_name
                 break
+        
+        # If exact match not found, look for partial matches
+        if delivery_col is None:
+            for col in df.columns:
+                if 'dely' in str(col).lower() or 'delivery' in str(col).lower():
+                    delivery_col = col
+                    break
         
         if delivery_col is None:
             logger.warning("⚠️ Delivery column not found. Available columns:", df.columns.tolist())
@@ -96,14 +125,18 @@ def main():
         df[delivery_col] = df[delivery_col].astype(str).str.replace("%", "").str.strip()
         df[delivery_col] = pd.to_numeric(df[delivery_col], errors="coerce")
         
-        # Remove rows with NaN delivery percentages
+        # Remove rows with NaN delivery percentages and invalid values
+        initial_count = len(df)
         df = df.dropna(subset=[delivery_col])
+        df = df[df[delivery_col] >= 0]  # Remove negative values
+        df = df[df[delivery_col] <= 100]  # Remove values > 100%
         
-        logger.info(f"📊 Data processing complete. Found {len(df)} stocks after cleaning.")
+        logger.info(f"📊 Data processing complete. Found {len(df)} stocks after cleaning (was {initial_count}).")
         logger.info(f"📊 Sample data:\n{df.head()}")
 
         # ========= STEP 3: FILTER =========
-        high_delivery = df[df[delivery_col] > 85]
+        high_delivery = df[df[delivery_col] > 85].copy()
+        high_delivery = high_delivery.sort_values(delivery_col, ascending=False)
         logger.info(f"🎯 Found {len(high_delivery)} stocks with delivery > 85%")
 
         # ========= STEP 3B: CUSTOM STOCK ANALYSIS =========
@@ -152,140 +185,55 @@ def main():
 
         # ========= STEP 4: BUILD EMAIL BODY =========
         current_date = date.today().strftime("%B %d, %Y")
+        current_time = datetime.now().strftime("%H:%M:%S IST")
+        
+        # Enhanced CSS styles
+        css_styles = """
+        <style>
+            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+            .container { max-width: 800px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                     color: white; padding: 20px; border-radius: 10px; text-align: center; }
+            .stats { background: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; }
+            .table-container { overflow-x: auto; }
+            .styled-table { 
+                width: 100%; border-collapse: collapse; margin: 20px 0; 
+                box-shadow: 0 0 20px rgba(0, 0, 0, 0.1); border-radius: 5px; overflow: hidden;
+            }
+            .styled-table th { 
+                background: #009879; color: white; padding: 12px 15px; text-align: left; font-weight: bold;
+            }
+            .styled-table td { 
+                padding: 12px 15px; border-bottom: 1px solid #ddd;
+            }
+            .styled-table tbody tr:nth-of-type(even) { background: #f3f3f3; }
+            .styled-table tbody tr:hover { background: #f5f5f5; }
+            .footer { color: #666; font-size: 0.9em; text-align: center; margin-top: 30px; 
+                     border-top: 1px solid #eee; padding-top: 20px; }
+            .highlight { color: #009879; font-weight: bold; }
+            .no-data { text-align: center; padding: 40px; color: #666; }
+        </style>
+        """
         
         if not high_delivery.empty:
-            # Ensure we have the right columns for the email
+            # Prepare columns for display
             display_cols = []
-            for col in ["Company Name", "Last Price", delivery_col]:
-                if col in high_delivery.columns:
-                    display_cols.append(col)
+            col_mapping = {
+                'Company Name': 'Company',
+                'Last Price': 'Price',
+                delivery_col: 'Delivery %'
+            }
             
+            for original_col, display_name in col_mapping.items():
+                if original_col in high_delivery.columns:
+                    display_cols.append((original_col, display_name))
+            
+            # If standard columns not found, use first 3 columns
             if not display_cols:
-                display_cols = high_delivery.columns[:3].tolist()  # Take first 3 columns
+                for i, col in enumerate(high_delivery.columns[:3]):
+                    display_name = col if i != len(high_delivery.columns) - 1 else 'Delivery %'
+                    display_cols.append((col, display_name))
             
-            html_table = high_delivery[display_cols].to_html(
-                index=False,
-                justify="center", 
-                border=1,
-                table_id="deliveryTable",
-                classes="styled-table"
-            )
-            
-            message_body = f"""
-            <html>
-              <head>
-                <style>
-                  .styled-table {{
-                    border-collapse: collapse;
-                    margin: 25px 0;
-                    font-size: 0.9em;
-                    font-family: sans-serif;
-                    min-width: 400px;
-                    box-shadow: 0 0 20px rgba(0, 0, 0, 0.15);
-                  }}
-                  .styled-table th,
-                  .styled-table td {{
-                    padding: 12px 15px;
-                    text-align: left;
-                    border-bottom: 1px solid #dddddd;
-                  }}
-                  .styled-table th {{
-                    background-color: #009879;
-                    color: #ffffff;
-                    text-transform: uppercase;
-                  }}
-                  .styled-table tbody tr:nth-of-type(even) {{
-                    background-color: #f3f3f3;
-                  }}
-                </style>
-              </head>
-              <body>
-                <h2>🎯 Stocks with High Delivery % (>85%) - Nifty 500</h2>
-                <p><strong>Date:</strong> {current_date}</p>
-                <p><strong>Total stocks found:</strong> {len(high_delivery)}</p>
-                {html_table}
-                <hr>
-                <p style="color: #666; font-size: 0.9em;">
-                  📊 High delivery percentage often indicates genuine buying interest and reduced speculation.<br>
-                  🤖 Automated by GitHub Actions | Generated at {datetime.now().strftime("%H:%M:%S IST")}
-                </p>
-              </body>
-            </html>
-            """
-        else:
-            message_body = f"""
-            <html>
-              <body>
-                <h2>📊 Daily Delivery Report - No High Delivery Stocks Today</h2>
-                <p><strong>Date:</strong> {current_date}</p>
-                <p>🔍 No Nifty 500 stock today has Delivery % > 85%.</p>
-                <p>This could indicate:</p>
-                <ul>
-                  <li>Lower institutional activity</li>
-                  <li>Increased speculative trading</li>
-                  <li>Market-wide consolidation phase</li>
-                </ul>
-                <hr>
-                <p style="color: #666; font-size: 0.9em;">
-                  🤖 Automated by GitHub Actions | Generated at {datetime.now().strftime("%H:%M:%S IST")}
-                </p>
-              </body>
-            </html>
-            """
-
-        # Add custom stock analysis table if available
-        if not analysis_df.empty:
-            analysis_html = analysis_df.to_html(index=False, border=1, justify="center", classes="styled-table")
-            message_body += f"""
-                <h2>📈 Custom Stock Analysis</h2>
-                {analysis_html}
-            """
-
-        logger.info("📧 Email content prepared successfully")
-
-        # ========= STEP 5: SEND EMAIL =========
-        sender = "deepshrivastava2493@gmail.com"
-        receivers = [
-            "rockingdeep69@gmail.com",
-            "akhileshekka@gmail.com"
-        ]
-
-        app_password = os.environ.get("GMAIL_APP_PASSWORD")
-        if not app_password:
-            raise RuntimeError("❌ Gmail app password not found. Please set GMAIL_APP_PASSWORD secret in GitHub.")
-
-        try:
-            logger.info("📤 Preparing to send email...")
-            
-            # Create message
-            msg = MIMEMultipart("alternative")
-            subject = f"📊 Stock Delivery Alert ({len(high_delivery)} stocks) - {current_date}"
-            msg["Subject"] = subject
-            msg["From"] = sender
-            msg["To"] = ", ".join(receivers)
-            msg.attach(MIMEText(message_body, "html", "utf-8"))
-
-            # Send email
-            with smtplib.SMTP("smtp.gmail.com", 587) as server:
-                server.starttls()
-                server.login(sender, app_password)
-                server.sendmail(sender, receivers, msg.as_string())
-            
-            logger.info(f"✅ Email sent successfully to: {', '.join(receivers)}")
-
-        except smtplib.SMTPAuthenticationError as auth_err:
-            logger.error(f"❌ Gmail authentication failed: {auth_err}")
-            logger.error("💡 Check if your app password is correct and 2FA is enabled")
-            raise
-        except Exception as e:
-            logger.error(f"⚠️ Error sending email: {e}")
-            raise
-
-        logger.info(f"🎉 Script completed successfully at {datetime.now()}")
-        
-    except Exception as e:
-        logger.error(f"💥 Script failed with error: {e}")
-        sys.exit(1)
 
 if __name__ == "__main__":
     main()
