@@ -2,7 +2,7 @@ name: Daily Stock Delivery Alert
 
 on:
   schedule:
-    - cron: '30 15 * * *'  # 9:00 PM IST daily
+    - cron: '30 0 * * *'   # 6:00 AM IST daily
   workflow_dispatch:  # Manual testing
 
 jobs:
