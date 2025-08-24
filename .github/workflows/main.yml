@@ -1,9 +1,9 @@
-name: Daily Stock Delivery Alert
+name: Daily Stock Delivery % Alert 
 
 on:
   schedule:
-    #- cron: '30 0 * * *'   # 6:00 AM IST daily (00:30 UTC)
-    - cron: '0 9 * * *'   # 2:30 PM IST daily
+    - cron: '30 0 * * *'   # 6:00 AM IST daily (00:30 UTC)
+    #- cron: '0 9 * * *'   # 2:30 PM IST daily
   workflow_dispatch:  # Manual trigger for testing
 
 jobs:
