@@ -151,6 +151,7 @@ for _, stock_row in stock_list.iterrows():
     except Exception as e:
         print(f"Error with {stock_row['Company Name']}: {e}")
 
+
 # ---- Step 5: Emoji + two-column KPI rendering (per-stock card) ----
 def render_vertical_html(results: list, date_str: str) -> str:
     def rng(vmin, vmax, pmin=None, pmax=None):
@@ -177,13 +178,14 @@ def render_vertical_html(results: list, date_str: str) -> str:
       .title{font-weight:800;font-size:20px;color:#222;margin:0 0 6px}
       .hl{background:#fff3b0;padding:2px 6px;border-radius:6px}
       .muted{color:#666;font-size:12px;margin:0 0 12px 0}
-      .card{border:2px solid #000;border-radius:10px;padding:14px 16px;margin:14px 0;background:#fff;box-shadow:2px 3px 8px #d1d9ee}
+      .card{border:2px solid #000;border-radius:10px;padding:14px 16px;background:#fff;box-shadow:2px 3px 8px #d1d9ee}
       .head{font-weight:700;color:#1f2937;font-size:15px;margin-bottom:6px}
       .cap{color:#777;font-size:12px;margin-left:6px}
       table.kpi{border-collapse:collapse;width:100%;border:1px solid #000}
       table.kpi td{border:1px solid #000;padding:8px 10px;vertical-align:top;font-size:14px;background:#fff}
       table.kpi td.l{width:230px;white-space:nowrap}
       .sml{color:#777;font-size:12px}
+      .sep{height:24px}
     </style>
     """
 
@@ -191,7 +193,7 @@ def render_vertical_html(results: list, date_str: str) -> str:
     <h2>📈✨ High Delivery Stock Analysis (Nifty 500) ✨</h2>
     <div class='muted'>Date (IST): {date_str} • Filter: Delivery ≥ {DELIVERY_THRESHOLD}%</div><br>
     """
-    
+
     cards = []
     for item in results:
         meta = item.get("meta", {})
@@ -213,13 +215,12 @@ def render_vertical_html(results: list, date_str: str) -> str:
         vol = k.get("volume_trend", "")
         rs = k.get("relative_strength", "")
         funda = k.get("fundamentals", "")
-        keyd = k.get("key_driver", "")
         tsp = (k.get("tsp", {}) or {}).get("probability_pct", "")
 
         ut1, ut2 = rng(ut.get("price_min"), ut.get("price_max"), ut.get("pct_min"), ut.get("pct_max"))
         sl1, sl2 = rng(sl.get("price_min"), sl.get("price_max"), sl.get("pct_min"), sl.get("pct_max"))
-        supports = ", ".join(map(str, levels.get("support", []) or []))
-        resist   = ", ".join(map(str, levels.get("resistance", []) or []))
+        supports = ", ".join(map(str, (levels.get("support") or [])))
+        resist   = ", ".join(map(str, (levels.get("resistance") or [])))
 
         entry = tp.get("entry_trigger", {}) or {}
         targets = ", ".join("₹"+str(x) for x in (tp.get("targets") or []))
@@ -232,7 +233,7 @@ def render_vertical_html(results: list, date_str: str) -> str:
 
         card = f"""
         <div class="card">
-          <div class="head">🟢 {stock} <span class="cap">{mcap}</span></div>
+          <div class="head"><b>🟢 {stock} <span class="cap"</b>{mcap}</span></div>
           <table class="kpi" role="presentation">
             <tr><td class="l">🍏 <b>CMP</b></td><td>₹{cmp_val}</td></tr>
             <tr><td class="l">📒 <b>Delivery %</b></td><td>{dely}%</td></tr>
@@ -246,15 +247,15 @@ def render_vertical_html(results: list, date_str: str) -> str:
             <tr><td class="l">📈 <b>Volume Trend</b></td><td>{vol}</td></tr>
             <tr><td class="l">🧭 <b>Rel. Strength</b></td><td>{rs}</td></tr>
             <tr><td class="l">📚 <b>Fundamentals</b></td><td>{funda}</td></tr>
-            <tr><td class="l">🎯 <b>Key Driver</b></td><td>{keyd}</td></tr>
-            <tr><td class="l">🏁 <b>TSP%</b></td><td>{tsp_pill(tsp)}</td></tr>
+            <tr><td class="l">🎯 <b>TSP%</b></td><td>{tsp_pill(tsp)}</td></tr>
             <tr><td class="l">🧭 <b>Trade Plan</b></td><td>{plan_html}</td></tr>
           </table>
         </div>
+        <br><br>  <!-- explicit line breaks between summaries -->
         """
         cards.append(card)
 
-    footer = "<div class='muted'>Automated alert • Educational use only.</div></div>"
+    footer = "<div class='muted'>Automated alert • Educational use only.</div>"
     return f"<html><body>{style}{header}{''.join(cards)}{footer}</body></html>"
 
 # ---- Step 6: Compose message HTML ----
