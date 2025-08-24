@@ -2,7 +2,7 @@ name: Daily Stock Delivery Alert
 
 on:
   schedule:
-    - cron: '30 0 * * *'   # 6:00 AM IST daily
+    - cron: '30 0 * * *'   # 6:00 AM IST daily (00:30 UTC)
   workflow_dispatch:  # Manual trigger for testing
 
 jobs:
@@ -28,8 +28,8 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt
 
-    - name: Run new delivery script with good mail
+    - name: Run delivery script with formatted email
       run: |
-        echo "🚀 Starting new delivery script..."
+        echo "🚀 Starting delivery script..."
         python Delivery_good_mail.py
-        echo "✅ New script execution completed"
+        echo "✅ Script execution completed"
