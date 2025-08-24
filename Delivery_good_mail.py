@@ -1,5 +1,3 @@
-#!pip install --upgrade openai
-
 import pandas as pd
 import requests
 from io import StringIO
@@ -16,12 +14,26 @@ DELIVERY_THRESHOLD = 85
 openai_api_key = os.environ.get("OPENAI_API_KEY")
 sender = "deepshrivastava2493@gmail.com"
 receivers = ["rockingdeep69@gmail.com"]
-app_password = os.environ.get("GMAIL_APP_PASSWORD") # Gmail App password; never your main password
+app_password = os.environ.get("GMAIL_APP_PASSWORD")  # Gmail App password; never your main password
 
-# ---- Step 1: Fetch & parse delivery data ----
+# ---- Step 1: Fetch & parse delivery data with enhanced headers ----
 url = "https://www.moneycontrol.com/india/stockmarket/stock-deliverables/marketstatistics/indices/nifty-500-7.html"
-headers = { "User-Agent": "Mozilla/5.0" }
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Connection": "keep-alive",
+    "Referer": "https://www.moneycontrol.com/",
+    "Upgrade-Insecure-Requests": "1"
+}
+
 response = requests.get(url, headers=headers, timeout=30)
+print(f"Status Code: {response.status_code}")
+print(f"Fetched URL: {response.url}")
+print(f"Response Length: {len(response.text)} characters")
+
 response.raise_for_status()
 df = pd.read_html(StringIO(response.text))[0]
 df.columns = [col.strip() for col in df.columns]
@@ -148,7 +160,7 @@ def get_json_analysis(stock_row):
         date_iso=today_iso
     )
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-3.5-turbo",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1
     )
@@ -164,59 +176,55 @@ for _, stock_row in stock_list.iterrows():
         analysis = get_json_analysis(stock_row)
         results.append(analysis)
     except Exception as e:
-        print(f"Error with {stock_row['Company Name']}: {e}")
+        print(f"Error analyzing {stock_row['Company Name']}: {e}")
 
-# ---- Step 5: Render VERTICAL HTML blocks with enhanced style ----
+# ---- Step 5: Render VERTICAL HTML blocks with borders and no emojis in heading ----
 def render_vertical_html(results: list, date_str: str) -> str:
-    style = """
+    style = f"""
     <style>
-      .stock-block {
+      .stock-block {{
         margin-bottom: 36px;
-        border: 2px solid #000000;  /* darker and thicker for better visibility */
+        border: 2px solid #000000;
         border-radius: 8px;
         padding: 18px 22px 14px 22px;
         background: #f7faff;
         box-shadow: 2px 3px 8px #d1d9ee;
-      }
-      .stock-title {
+      }}
+      .stock-title {{
         font-size: 18px;
         font-weight: bold;
         color: #0b3d91;
         margin-bottom: 8px;
-      }
-      .muted {
+      }}
+      .muted {{
         color: #666;
         font-size: 11px;
         margin-bottom: 12px;
-      }
-      table.kpi-table {
+      }}
+      table.kpi-table {{
         border-collapse: collapse;
         width: 100%;
         margin-top: 16px;
         font-family: Arial, sans-serif;
-        border: 1px solid #000000 !important; /* table border */
-      }
-      table.kpi-table td, table.kpi-table th {
+        border: 1px solid #000000 !important;
+      }}
+      table.kpi-table td, table.kpi-table th {{
         padding: 7px 10px;
-        border: 1px solid #000000 !important; /* cell borders */
+        border: 1px solid #000000 !important;
         font-size: 14px;
         background: #fff;
         vertical-align: top;
-      }
-      table.kpi-table tr:first-child td {
+      }}
+      table.kpi-table tr:first-child td {{
         background: #d9e0f7;
         font-weight: bold;
-      }
-      /* rest of your CSS */
+      }}
     </style>
     """
-
-    
     header = f"""
-    <h2>📈✨ High Delivery Stock Analysis (Nifty 500) ✨</h2>
+    <h2>High Delivery Stock Analysis (Nifty 500)</h2>
     <div class='muted'>Date (IST): {date_str} • Filter: Delivery ≥ {DELIVERY_THRESHOLD}%</div><br>
     """
-    
     blocks = []
     for item in results:
         meta = item.get("meta", {})
@@ -248,24 +256,24 @@ def render_vertical_html(results: list, date_str: str) -> str:
 
         blocks.append(f"""
         <div class="stock-block">
-          <div class="stock-title">✅ {stock} <span class="muted">{mcap}</span></div><br>
+          <div class="stock-title">{stock} <span class="muted">{mcap}</span></div><br>
           <table class="kpi-table" role="presentation">
-            <tr><td><span class="symbol">💰</span><strong>CMP</strong></td><td>₹{cmp_val}</td></tr>
-            <tr><td><span class="symbol">📊</span><strong>Delivery %</strong></td><td>{dely}%</td></tr>
-            <tr><td><span class="symbol">🚀</span><strong>Upside Target</strong></td><td>₹{ut.get('price_min','')} – ₹{ut.get('price_max','')}<br>({ut.get('pct_min','')}% – {ut.get('pct_max','')}%)<br><span class='muted'>{ut.get('basis','')}</span></td></tr>
-            <tr><td><span class="symbol">🛑</span><strong>Stop Loss</strong></td><td>₹{sl.get('price_min','')} – ₹{sl.get('price_max','')}<br>({sl.get('pct_min','')}% – {sl.get('pct_max','')}%)<br><span class='muted'>{sl.get('basis','')}</span></td></tr>
-            <tr><td><span class="symbol">⚖️</span><strong>Risk/Reward</strong></td><td>{rr.get('min','')} – {rr.get('max','')}</td></tr>
-            <tr><td><span class="symbol">📉</span><strong>ATR</strong></td><td>₹{atr.get('value','')} ({atr.get('pct_of_price','')}%)</td></tr>
-            <tr><td><span class="symbol">📈</span><strong>Support / Resistance</strong></td><td>S: {', '.join(map(str, levels.get('support', [])))}<br>R: {', '.join(map(str, levels.get('resistance', [])))}</td></tr>
-            <tr><td><span class="symbol">⚡</span><strong>Setup</strong></td><td>{setup}</td></tr>
-            <tr><td><span class="symbol">📊</span><strong>Chart Pattern</strong></td><td>{k.get('chart_pattern','')}</td></tr>
-            <tr><td><span class="symbol">📈</span><strong>Volume Trend</strong></td><td>{k.get('volume_trend','')}</td></tr>
-            <tr><td><span class="symbol">⭐</span><strong>Rel. Strength</strong></td><td>{k.get('relative_strength','')}</td></tr>
-            <tr><td><span class="symbol">📚</span><strong>Fundamentals</strong></td><td>{k.get('fundamentals','')}</td></tr>
-            <tr><td><span class="symbol">🚩</span><strong>Key Driver</strong></td><td>{k.get('key_driver','')}</td></tr>
-            <tr><td><span class="symbol">🎯</span><strong>TSP%</strong></td><td><span class="pill {css}">{tsp}%</span></td></tr>
+            <tr><td><strong>CMP</strong></td><td>₹{cmp_val}</td></tr>
+            <tr><td><strong>Delivery %</strong></td><td>{dely}%</td></tr>
+            <tr><td><strong>Upside Target</strong></td><td>₹{ut.get('price_min','')} – ₹{ut.get('price_max','')}<br>({ut.get('pct_min','')}% – {ut.get('pct_max','')}%)<br><span class='muted'>{ut.get('basis','')}</span></td></tr>
+            <tr><td><strong>Stop Loss</strong></td><td>₹{sl.get('price_min','')} – ₹{sl.get('price_max','')}<br>({sl.get('pct_min','')}% – {sl.get('pct_max','')}%)<br><span class='muted'>{sl.get('basis','')}</span></td></tr>
+            <tr><td><strong>Risk/Reward</strong></td><td>{rr.get('min','')} – {rr.get('max','')}</td></tr>
+            <tr><td><strong>ATR</strong></td><td>₹{atr.get('value','')} ({atr.get('pct_of_price','')}%)</td></tr>
+            <tr><td><strong>Support / Resistance</strong></td><td>S: {', '.join(map(str, levels.get('support', [])))}<br>R: {', '.join(map(str, levels.get('resistance', [])))}</td></tr>
+            <tr><td><strong>Setup</strong></td><td>{setup}</td></tr>
+            <tr><td><strong>Chart Pattern</strong></td><td>{k.get('chart_pattern','')}</td></tr>
+            <tr><td><strong>Volume Trend</strong></td><td>{k.get('volume_trend','')}</td></tr>
+            <tr><td><strong>Rel. Strength</strong></td><td>{k.get('relative_strength','')}</td></tr>
+            <tr><td><strong>Fundamentals</strong></td><td>{k.get('fundamentals','')}</td></tr>
+            <tr><td><strong>Key Driver</strong></td><td>{k.get('key_driver','')}</td></tr>
+            <tr><td><strong>TSP%</strong></td><td><span class="pill {css}">{tsp}%</span></td></tr>
             <tr>
-              <td valign="top"><span class="symbol">🗺️</span><strong>Trade Plan</strong></td>
+              <td valign="top"><strong>Trade Plan</strong></td>
               <td>
                 Entry: {plan_entry.get('type','')} above ₹{plan_entry.get('above_price','')}<br>
                 Confirm: {plan_entry.get('confirmation','')}<br>
@@ -287,7 +295,7 @@ message_body = render_vertical_html(results, date_str)
 
 # ---- Step 7: Send Email ----
 msg = MIMEMultipart("alternative")
-msg["Subject"] = f"✨ High Delivery & Analysis Alert - {datetime.now().date()} "
+msg["Subject"] = f"High Delivery & Analysis Alert - {datetime.now().date()}"
 msg["From"] = sender
 msg["To"] = ", ".join(receivers)
 msg.attach(MIMEText(message_body, "html", "utf-8"))
