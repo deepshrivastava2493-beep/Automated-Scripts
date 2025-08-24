@@ -23,23 +23,6 @@ jobs:
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
-    
-    - name: Run old delivery script
-      env:
-        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-      run: |
-        echo "🚀 Starting old delivery script..."
-        python Delivery.py
-        echo "✅ Old script execution completed"
-    
-    - name: Run new delivery script
-      env:
-        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-      run: |
-        echo "🚀 Starting new delivery script..."
-        python Delivery_new.py
-        echo "✅ New script execution completed"
-
 
     - name: Run new delivery script with good mail
       env:
