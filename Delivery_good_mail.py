@@ -1,109 +1,50 @@
-#!/usr/bin/env python3
-import os
-import sys
-import time
-import json
-from datetime import datetime
-from io import StringIO
+# !pip install --upgrade openai pandas requests lxml
 
-import requests
 import pandas as pd
+import requests
+from io import StringIO
+from openai import OpenAI
+import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-import smtplib
-from openai import OpenAI
-from dotenv import load_dotenv
+import json
+from datetime import datetime
 
-# Load .env locally if present (GitHub Actions uses secrets)
-load_dotenv()
+# ---- CONFIG ----
+DELIVERY_THRESHOLD = 85
+openai_api_key = os.getenv("OPENAI_API_KEY")  # ← replace (or read from env)
+sender = "deepshrivastava2493@gmail.com"
+receivers = ["rockingdeep69@gmail.com"]
+app_password = os.getenv("GMAIL_APP_PASSWORD") # Gmail App password; never your main password
 
-# Config (env vars or defaults)
-URL = os.getenv("MC_URL", "https://www.moneycontrol.com/india/stockmarket/stock-deliverables/marketstatistics/indices/nifty-500-7.html")
-DELIVERY_THRESHOLD = float(os.getenv("DELIVERY_THRESHOLD", "85"))
-MAX_STOCKS = int(os.getenv("MAX_STOCKS", "6"))
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_TEMPERATURE = float(os.getenv("OPENAI_TEMPERATURE", "0.15"))
-API_RETRY = int(os.getenv("API_RETRY", "3"))
-API_RETRY_SLEEP = float(os.getenv("API_RETRY_SLEEP", "2.0"))
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "40"))
-DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+# ---- Step 1: Fetch & parse delivery data ----
+url = "https://www.moneycontrol.com/india/stockmarket/stock-deliverables/marketstatistics/indices/nifty-500-7.html"
+headers = {"User-Agent": "Mozilla/5.0"}
+response = requests.get(url, headers=headers, timeout=30)
+response.raise_for_status()
 
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "deepshrivastava2493@gmail.com")
-RECEIVER_EMAILS = os.getenv("RECEIVER_EMAILS", "rockingdeep69@gmail.com").split(",")
-SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+df = pd.read_html(StringIO(response.text))[0]
+df.columns = [col.strip() for col in df.columns]
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+# clean % and price (handles commas)
+if "Last Price" in df.columns:
+    df["Last Price"] = pd.to_numeric(
+        df["Last Price"].astype(str).str.replace(",", "", regex=False).str.strip(),
+        errors="coerce"
+    )
+df["Dely %"] = pd.to_numeric(
+    df["Dely %"].astype(str).str.replace("%", "", regex=False).str.strip(),
+    errors="coerce"
+)
+df = df.dropna(subset=["Dely %", "Last Price"])
 
-HEADERS = {
-    "User-Agent": os.getenv("USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                                          "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.moneycontrol.com/",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-}
+# ---- Step 2: Filter high delivery stocks ----
+high_delivery_df = df[df["Dely %"] >= DELIVERY_THRESHOLD]
+stock_list = high_delivery_df[["Company Name", "Last Price", "Dely %"]].reset_index(drop=True)
 
-def log(msg):
-    print(msg, flush=True)
-
-def ensure_secrets():
-    if not OPENAI_API_KEY:
-        raise RuntimeError("Missing OPENAI_API_KEY")
-    if not DRY_RUN:
-        if not SENDER_EMAIL:
-            raise RuntimeError("Missing SENDER_EMAIL")
-        if not RECEIVER_EMAILS:
-            raise RuntimeError("Missing RECEIVER_EMAILS")
-        if not GMAIL_APP_PASSWORD or len(GMAIL_APP_PASSWORD) < 16:
-            raise RuntimeError("Missing/invalid GMAIL_APP_PASSWORD")
-
-def _pick_table(tables):
-    for t in tables:
-        cols = [str(c).strip() for c in t.columns]
-        lc = [c.lower() for c in cols]
-        has_company = any(("company" in c and "name" in c) for c in lc)
-        has_delivery = any("dely" in c or "delivery" in c for c in lc)
-        if has_company and has_delivery:
-            t.columns = cols
-            return t
-    return max(tables, key=lambda x: x.shape[1])
-
-def fetch_delivery_table():
-    last_err = None
-    for _ in range(API_RETRY):
-        try:
-            resp = requests.get(URL, headers=HEADERS, timeout=REQUEST_TIMEOUT)
-            resp.raise_for_status()
-            tables = pd.read_html(StringIO(resp.text))
-            if not tables:
-                raise ValueError("No tables found")
-            base = _pick_table(tables).copy()
-            return base
-        except Exception as e:
-            last_err = e
-            time.sleep(API_RETRY_SLEEP)
-    raise RuntimeError(f"Fetch failed: {last_err}")
-
-def select_high_delivery(df):
-    df.columns = [str(c).strip() for c in df.columns]
-    name_col = next((c for c in df.columns if "company" in c.lower() and "name" in c.lower()), df.columns[0])
-    price_col = next((c for c in df.columns if any(x in c.lower() for x in ["last price", "ltp", "price", "close"])), df.columns[1])
-    delivery_col = next((c for c in df.columns if "dely" in c.lower() or "delivery" in c.lower()), None)
-    if delivery_col is None:
-        raise RuntimeError("Delivery % column not found")
-    df = df[[name_col, price_col, delivery_col]].copy()
-    df.columns = ["Company Name", "Last Price", "Dely %"]
-    df["Last Price"] = pd.to_numeric(df["Last Price"].astype(str).str.replace(",", "").str.strip(), errors="coerce")
-    df["Dely %"] = pd.to_numeric(df["Dely %"].astype(str).str.replace("%", "").str.strip(), errors="coerce")
-    df = df.dropna(subset=["Last Price", "Dely %"])
-    dfs = df[df["Dely %"] >= DELIVERY_THRESHOLD]
-    return dfs.sort_values("Dely %", ascending=False).head(MAX_STOCKS).reset_index(drop=True)
-
-def build_prompt(stock_name, last_price, delivery_pct, date_iso):
-    return f'''
+# ---- Step 3: Full JSON prompt ----
+def build_prompt(stock_name: str, last_price: float, delivery_pct: float, date_iso: str) -> str:
+    return f"""
 You are a stock swing trading assistant.
 Analyze the following NSE stock for a potential 10–14 day swing trade using a DELIVERY-based strategy and return ONLY a strict JSON object.
 
@@ -141,32 +82,11 @@ Return JSON in this exact shape (keys must match exactly):
   "kpis": {{
     "cmp": {last_price:.2f},
     "delivery_pct": {delivery_pct:.2f},
-    "upside_target": {{
-      "price_min": 0,
-      "price_max": 0,
-      "pct_min": 0,
-      "pct_max": 0,
-      "basis": ""
-    }},
-    "downside_stoploss": {{
-      "price_min": 0,
-      "price_max": 0,
-      "pct_min": -1,
-      "pct_max": -1,
-      "basis": ""
-    }},
-    "risk_reward": {{
-      "min": 0,
-      "max": 0
-    }},
-    "levels": {{
-      "support": [0, 0],
-      "resistance": [0, 0]
-    }},
-    "atr": {{
-      "value": 0,
-      "pct_of_price": 0
-    }},
+    "upside_target": {{"price_min": 0, "price_max": 0, "pct_min": 0, "pct_max": 0, "basis": ""}},
+    "downside_stoploss": {{"price_min": 0, "price_max": 0, "pct_min": -1, "pct_max": -1, "basis": ""}},
+    "risk_reward": {{"min": 0, "max": 0}},
+    "levels": {{"support": [0, 0], "resistance": [0, 0]}},
+    "atr": {{"value": 0, "pct_of_price": 0}},
     "technical_setup": "",
     "chart_pattern": "None",
     "volume_trend": "",
@@ -187,11 +107,7 @@ Return JSON in this exact shape (keys must match exactly):
     }}
   }},
   "trade_plan": {{
-    "entry_trigger": {{
-      "type": "breakout",
-      "above_price": 0,
-      "confirmation": "Close above level with volume > 1.5x 20D avg"
-    }},
+    "entry_trigger": {{"type": "breakout", "above_price": 0, "confirmation": "Close above level with volume > 1.5x 20D avg"}},
     "targets": [0, 0, 0],
     "stop_loss": 0,
     "position_size_pct_of_capital": 2.0,
@@ -203,63 +119,87 @@ Return JSON in this exact shape (keys must match exactly):
 Stock: {stock_name}
 Current price (CMP): ₹{last_price:.2f}
 Delivery %: {delivery_pct:.2f}
-'''
+""".strip()
 
-def openai_client():
-    return OpenAI(api_key=OPENAI_API_KEY)
+# ---- Step 4: OpenAI + JSON parse (strict JSON) ----
+client = OpenAI(api_key=openai_api_key)
 
-def analyze_via_openai(client, prompt):
-    last_err = None
-    for _ in range(API_RETRY):
-        try:
-            resp = client.chat.completions.create(
-              model=OPENAI_MODEL,
-              messages=[{"role": "user", "content": prompt}],
-              temperature=OPENAI_TEMPERATURE,
-              response_format={"type": "json_object"},
-            )
-            return json.loads(resp.choices[0].message.content)
-        except Exception as e:
-            last_err = e
-            if "429" in str(e).lower() or "insufficient_quota" in str(e).lower():
-                raise RuntimeError("OpenAI quota/limits error (429 insufficient_quota).")
-            time.sleep(API_RETRY_SLEEP)
-    raise RuntimeError(f"OpenAI call failed after retries: {last_err}")
+def get_json_analysis(stock_row):
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    prompt = build_prompt(
+        stock_name=stock_row["Company Name"],
+        last_price=float(stock_row["Last Price"]),
+        delivery_pct=float(stock_row["Dely %"]),
+        date_iso=today_iso
+    )
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.1,
+        response_format={"type": "json_object"},  # ← guarantees valid JSON
+    )
+    return json.loads(response.choices[0].message.content)
 
-def render_html(results, date_str):
+results = []
+for _, stock_row in stock_list.iterrows():
+    try:
+        analysis = get_json_analysis(stock_row)
+        # fill stock name if model leaves it blank
+        analysis.setdefault("meta", {})["stock"] = analysis.get("meta", {}).get("stock") or stock_row["Company Name"]
+        results.append(analysis)
+    except Exception as e:
+        print(f"Error with {stock_row['Company Name']}: {e}")
+
+# ---- Step 5: Emoji + two-column KPI rendering (per-stock card) ----
+def render_vertical_html(results: list, date_str: str) -> str:
+    def rng(vmin, vmax, pmin=None, pmax=None):
+        a = f"₹{vmin}" if vmin not in (None, "") else ""
+        b = f"₹{vmax}" if vmax not in (None, "") else ""
+        line1 = " – ".join([x for x in (a, b) if x])
+        p1 = f"{pmin}%" if pmin not in (None, "") else ""
+        p2 = f"{pmax}%" if pmax not in (None, "") else ""
+        line2 = f"({p1} – {p2})" if (p1 or p2) else ""
+        return line1, line2
+
+    def tsp_pill(p):
+        try: p = float(p)
+        except: return f"{p}%"
+        if p >= 75:  color, bg = "#137333", "#e6f4ea"
+        elif p >= 55: color, bg = "#8a6d3b", "#fff8e1"
+        else:         color, bg = "#a50e0e", "#fce8e6"
+        return f"<span style='background:{bg};color:{color};padding:2px 8px;border-radius:12px;font-weight:700'>{int(p)}%</span>"
+
     style = """
     <style>
-    table { border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; }
-    thead tr { background-color: #0b3d91; color: #fff; text-align: left; }
-    th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; vertical-align: top; }
-    tbody tr:nth-child(even) { background: #f7faff; }
-    .pill { padding: 2px 8px; border-radius: 12px; font-size: 12px; }
-    .bull { background:#e6f4ea; color:#137333; }
-    .bear { background:#fce8e6; color:#a50e0e; }
-    .neutral { background:#fff8e1; color:#8a6d3b; }
-    .muted { color:#666; font-size:11px; }
+      body{font-family:Arial,Helvetica,sans-serif;}
+      .wrap{max-width:760px;margin:0 auto;}
+      .title{font-weight:800;font-size:20px;color:#222;margin:0 0 6px}
+      .hl{background:#fff3b0;padding:2px 6px;border-radius:6px}
+      .muted{color:#666;font-size:12px;margin:0 0 12px 0}
+      .card{border:2px solid #000;border-radius:10px;padding:14px 16px;margin:14px 0;background:#fff;box-shadow:2px 3px 8px #d1d9ee}
+      .head{font-weight:700;color:#1f2937;font-size:15px;margin-bottom:6px}
+      .cap{color:#777;font-size:12px;margin-left:6px}
+      table.kpi{border-collapse:collapse;width:100%;border:1px solid #000}
+      table.kpi td{border:1px solid #000;padding:8px 10px;vertical-align:top;font-size:14px;background:#fff}
+      table.kpi td.l{width:230px;white-space:nowrap}
+      .sml{color:#777;font-size:12px}
     </style>
     """
+
     header = f"""
-    <h2>High Delivery Stock Analysis (Nifty 500)</h2>
-    <div class='muted'>Date (IST): {date_str} • Filter: Delivery ≥ {DELIVERY_THRESHOLD}% • Count: {len(results)}</div>
-    <table>
-    <thead>
-      <tr>
-        <th>Stock</th><th>CMP</th><th>Delivery %</th><th>Upside Target (₹ / %)</th>
-        <th>Stop Loss (₹ / %)</th><th>R:R</th><th>ATR (₹ / %)</th><th>Support / Resistance</th>
-        <th>Setup</th><th>TSP%</th><th>Trade Plan</th>
-      </tr>
-    </thead><tbody>
+    <h2>📈✨ High Delivery Stock Analysis (Nifty 500) ✨</h2>
+    <div class='muted'>Date (IST): {date_str} • Filter: Delivery ≥ {DELIVERY_THRESHOLD}%</div><br>
     """
-    rows = []
+    
+    cards = []
     for item in results:
         meta = item.get("meta", {})
         k = item.get("kpis", {})
-        tp = item.get("trade_plan", {})
+        tp = item.get("trade_plan", {}) or {}
 
         stock = meta.get("stock", "")
         mcap = meta.get("market_cap_category", "")
+
         cmp_val = k.get("cmp", "")
         dely = k.get("delivery_pct", "")
         ut = k.get("upside_target", {}) or {}
@@ -268,109 +208,69 @@ def render_html(results, date_str):
         atr = k.get("atr", {}) or {}
         levels = k.get("levels", {}) or {}
         setup = k.get("technical_setup", "")
+        patt = k.get("chart_pattern", "")
+        vol = k.get("volume_trend", "")
+        rs = k.get("relative_strength", "")
+        funda = k.get("fundamentals", "")
+        keyd = k.get("key_driver", "")
         tsp = (k.get("tsp", {}) or {}).get("probability_pct", "")
 
-        css = "neutral"
-        try:
-            t = float(tsp)
-            css = "bull" if t >= 75 else "neutral" if t >= 55 else "bear"
-        except:
-            pass
-        
-        plan_entry = tp.get("entry_trigger", {})
-        plan_targets = tp.get("targets", [])
-        plan_sl = tp.get("stop_loss", "")
+        ut1, ut2 = rng(ut.get("price_min"), ut.get("price_max"), ut.get("pct_min"), ut.get("pct_max"))
+        sl1, sl2 = rng(sl.get("price_min"), sl.get("price_max"), sl.get("pct_min"), sl.get("pct_max"))
+        supports = ", ".join(map(str, levels.get("support", []) or []))
+        resist   = ", ".join(map(str, levels.get("resistance", []) or []))
 
-        rows.append(f"""
-        <tr>
-          <td><strong>{stock}</strong><br><span class='muted'>{mcap}</span></td>
-          <td>₹{cmp_val}</td>
-          <td>{dely}%</td>
-          <td>₹{ut.get('price_min','')}–₹{ut.get('price_max','')}<br>({ut.get('pct_min','')}%–{ut.get('pct_max','')}%)</td>
-          <td>₹{sl.get('price_min','')}–₹{sl.get('price_max','')}<br>({sl.get('pct_min','')}%–{sl.get('pct_max','')}%)</td>
-          <td>{rr.get('min','')}–{rr.get('max','')}</td>
-          <td>₹{atr.get('value','')} / {atr.get('pct_of_price','')}%</td>
-          <td>S: {', '.join(map(str, levels.get('support', [])))}<br>R: {', '.join(map(str, levels.get('resistance', [])))}</td>
-          <td>{setup}</td>
-          <td><span class='pill {css}'>{tsp}%</span></td>
-          <td>Entry: {plan_entry.get('type','')} above ₹{plan_entry.get('above_price','')}<br>
-              Targets: {', '.join('₹'+str(x) for x in plan_targets)}<br>
-              SL: ₹{plan_sl}</td>
-        </tr>
-        """)
+        entry = tp.get("entry_trigger", {}) or {}
+        targets = ", ".join("₹"+str(x) for x in (tp.get("targets") or []))
+        plan_html = f"""Entry: {entry.get('type','')} above ₹{entry.get('above_price','')}<br>
+        Confirm: {entry.get('confirmation','')}<br>
+        Targets: {targets}<br>
+        Stop Loss: ₹{tp.get('stop_loss','')}<br>
+        Sizing: {tp.get('position_size_pct_of_capital','2.0')}%<br>
+        Management: {tp.get('management','')}"""
 
-    footer = "</tbody></table>"
-    return f"<html><body>{style}{header}{''.join(rows)}{footer}<p class='muted'>Automated alert • Educational use only.</p></body></html>"
+        card = f"""
+        <div class="card">
+          <div class="head">🟢 {stock} <span class="cap">{mcap}</span></div>
+          <table class="kpi" role="presentation">
+            <tr><td class="l">🍏 <b>CMP</b></td><td>₹{cmp_val}</td></tr>
+            <tr><td class="l">📒 <b>Delivery %</b></td><td>{dely}%</td></tr>
+            <tr><td class="l">📌 <b>Upside Target</b></td><td>{ut1}<br><span class="sml">{ut2}</span><br><span class="sml">{ut.get('basis','')}</span></td></tr>
+            <tr><td class="l">🛑 <b>Stop Loss</b></td><td>{sl1}<br><span class="sml">{sl2}</span><br><span class="sml">{sl.get('basis','')}</span></td></tr>
+            <tr><td class="l">📏 <b>Risk/Reward</b></td><td>{rr.get('min','')} – {rr.get('max','')}</td></tr>
+            <tr><td class="l">📶 <b>ATR</b></td><td>₹{atr.get('value','')} ({atr.get('pct_of_price','')}%)</td></tr>
+            <tr><td class="l">📍 <b>Support / Resistance</b></td><td>S: {supports}<br>R: {resist}</td></tr>
+            <tr><td class="l">⚡ <b>Setup</b></td><td>{setup}</td></tr>
+            <tr><td class="l">📊 <b>Chart Pattern</b></td><td>{patt}</td></tr>
+            <tr><td class="l">📈 <b>Volume Trend</b></td><td>{vol}</td></tr>
+            <tr><td class="l">🧭 <b>Rel. Strength</b></td><td>{rs}</td></tr>
+            <tr><td class="l">📚 <b>Fundamentals</b></td><td>{funda}</td></tr>
+            <tr><td class="l">🎯 <b>Key Driver</b></td><td>{keyd}</td></tr>
+            <tr><td class="l">🏁 <b>TSP%</b></td><td>{tsp_pill(tsp)}</td></tr>
+            <tr><td class="l">🧭 <b>Trade Plan</b></td><td>{plan_html}</td></tr>
+          </table>
+        </div>
+        """
+        cards.append(card)
 
-def send_email_html(subject, html_body):
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = SENDER_EMAIL
-    msg["To"] = ", ".join(RECEIVER_EMAILS)
-    msg.attach(MIMEText(html_body, "html", "utf-8"))
+    footer = "<div class='muted'>Automated alert • Educational use only.</div></div>"
+    return f"<html><body>{style}{header}{''.join(cards)}{footer}</body></html>"
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SENDER_EMAIL, GMAIL_APP_PASSWORD)
-        server.sendmail(SENDER_EMAIL, RECEIVER_EMAILS, msg.as_string())
+# ---- Step 6: Compose message HTML ----
+date_str = datetime.now().strftime("%Y-%m-%d %H:%M IST")
+message_body = render_vertical_html(results, date_str)
 
-def main():
-    ensure_secrets()
-    date_str = datetime.now().strftime("%Y-%m-%d %H:%M IST")
+# ---- Step 7: Send Email ----
+msg = MIMEMultipart("alternative")
+msg["Subject"] = f"✨ High Delivery & Analysis Alert - {datetime.now().date()} "
+msg["From"] = sender
+msg["To"] = ", ".join(receivers)
+msg.attach(MIMEText(message_body, "html", "utf-8"))
 
-    log("Fetching Moneycontrol deliverables…")
-    df = fetch_delivery_table()
-    log(f"Parsed rows: {len(df)}")
+with smtplib.SMTP("smtp.gmail.com", 587) as server:
+    server.starttls()
+    server.login(sender, app_password)
+    server.sendmail(sender, receivers, msg.as_string())
 
-    picks = select_high_delivery(df)
-    log(f"High-delivery picks (≥{DELIVERY_THRESHOLD}%): {len(picks)}")
-    if picks.empty:
-        html = f"<html><body><h3>No high-delivery stocks today (≥{DELIVERY_THRESHOLD}%).</h3></body></html>"
-        subject = f"High Delivery & Swing Analysis – {date_str}"
-        if DRY_RUN:
-            print(subject)
-            print(html)
-            return
-        send_email_html(subject, html)
-        log("Email sent (empty report).")
-        return
+print("✅ Email sent with emoji two-column KPI cards.")
 
-    client = openai_client()
-    results = []
-    for _, row in picks.iterrows():
-        stock = str(row["Company Name"]).strip()
-        last_price = float(row["Last Price"])
-        dely = float(row["Dely %"])
-        prompt = build_prompt(stock, last_price, dely, date_str)
-        log(f"OpenAI → {stock} (CMP ₹{last_price}, Dely {dely}%)")
-        try:
-            res = analyze_via_openai(client, prompt)
-            res.setdefault("meta", {})["stock"] = res.get("meta", {}).get("stock") or stock
-            results.append(res)
-            time.sleep(0.7)  # modest pacing
-        except Exception as e:
-            log(f"OpenAI error for {stock}: {e}")
-            results.append({
-                "meta": {"stock": stock, "exchange": "NSE", "date": date_str, "market_cap_category": ""},
-                "kpis": {"cmp": last_price, "delivery_pct": dely, "technical_setup": f"OpenAI error: {e}",
-                         "tsp": {"probability_pct": 0}},
-                "trade_plan": {"entry_trigger": {"type": "", "above_price": ""}, "targets": [], "stop_loss": ""},
-                "disclaimer": "OpenAI failure for this row."
-            })
-
-    html = render_html(results, date_str)
-    subject = f"High Delivery & Swing Analysis – {date_str}"
-
-    if DRY_RUN:
-        print(subject)
-        print(html)
-    else:
-        send_email_html(subject, html)
-        log("✅ Email sent.")
-
-if __name__ == "__main__":
-    try:
-        main()
-    except Exception as exc:
-        print(f"❌ Fatal error: {exc}", file=sys.stderr)
-        sys.exit(1)
