@@ -1,10 +1,4 @@
 #!/usr/bin/env python3
-# High-Delivery Swing Mailer (GitHub-friendly)
-# - Scrapes Moneycontrol (Nifty 500 deliverables)
-# - Filters high-delivery stocks
-# - Calls OpenAI (gpt-4o-mini) to produce strict JSON analysis
-# - Renders HTML email; optional email send via Gmail SMTP
-
 import os, sys, time, json
 from datetime import datetime
 from io import StringIO
@@ -17,14 +11,10 @@ import smtplib
 from openai import OpenAI
 from dotenv import load_dotenv
 
-# -----------------------------
-# Load .env (if present)
-# -----------------------------
+# Load .env for local testing, if present
 load_dotenv()
 
-# -----------------------------
-# Config (from ENV with defaults)
-# -----------------------------
+# Config from ENV or default
 URL = os.getenv("MC_URL", "https://www.moneycontrol.com/india/stockmarket/stock-deliverables/marketstatistics/indices/nifty-500-7.html")
 DELIVERY_THRESHOLD = float(os.getenv("DELIVERY_THRESHOLD", "85"))
 MAX_STOCKS = int(os.getenv("MAX_STOCKS", "6"))
@@ -36,7 +26,7 @@ REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "40"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
 SENDER_EMAIL = "deepshrivastava2493@gmail.com"
-RECEIVER_EMAILS = "rockingdeep69@gmail.com"
+RECEIVER_EMAILS = ["rockingdeep69@gmail.com"]
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
@@ -51,25 +41,21 @@ HEADERS = {
     "Connection": "keep-alive",
 }
 
-# -----------------------------
-# Helpers
-# -----------------------------
 def log(msg: str):
     print(msg, flush=True)
 
 def ensure_secrets():
     if not OPENAI_API_KEY:
-        raise RuntimeError("Missing OPENAI_API_KEY (set it in your environment or .env)")
+        raise RuntimeError("Missing OPENAI_API_KEY")
     if not DRY_RUN:
         if not SENDER_EMAIL:
-            raise RuntimeError("Missing SENDER_EMAIL (required when DRY_RUN=false)")
+            raise RuntimeError("Missing SENDER_EMAIL")
         if not RECEIVER_EMAILS:
-            raise RuntimeError("Missing RECEIVER_EMAILS (comma-separated) when DRY_RUN=false")
+            raise RuntimeError("Missing RECEIVER_EMAILS")
         if not GMAIL_APP_PASSWORD or len(GMAIL_APP_PASSWORD) < 16:
-            raise RuntimeError("Missing/invalid GMAIL_APP_PASSWORD (use Gmail App Password)")
+            raise RuntimeError("Missing/invalid GMAIL_APP_PASSWORD")
 
 def _pick_table(tables):
-    # choose the table with both "company name" and "dely %" semantics
     for t in tables:
         cols = [str(c).strip() for c in t.columns]
         lc = [c.lower() for c in cols]
@@ -78,25 +64,24 @@ def _pick_table(tables):
         if has_company and has_delivery:
             t.columns = cols
             return t
-    # fallback: widest table
     return max(tables, key=lambda x: x.shape[1])
 
 def fetch_delivery_table() -> pd.DataFrame:
     last_err = None
-    for _ in range(3):
+    for _ in range(API_RETRY):
         try:
             resp = requests.get(URL, headers=HEADERS, timeout=REQUEST_TIMEOUT)
             resp.raise_for_status()
             tables = pd.read_html(StringIO(resp.text))
             if not tables:
-                raise ValueError("No tables found on the page.")
+                raise ValueError("No tables found")
             base = _pick_table(tables).copy()
             break
         except Exception as e:
             last_err = e
-            time.sleep(1.5)
+            time.sleep(API_RETRY_SLEEP)
     else:
-        raise RuntimeError(f"Failed to fetch/parse Moneycontrol tables: {last_err}")
+        raise RuntimeError(f"Fetch failed: {last_err}")
 
     base.columns = [str(c).strip() for c in base.columns]
 
@@ -111,7 +96,7 @@ def fetch_delivery_table() -> pd.DataFrame:
     price_col = find_col(["last price", "ltp", "price", "close"]) or base.columns[1]
     dely_col  = find_col(["dely", "delivery"]) or ("Dely %" if "Dely %" in base.columns else None)
     if dely_col is None:
-        raise ValueError(f"Couldn't locate Delivery column. Headers: {list(base.columns)}")
+        raise ValueError(f"Missing Delivery column. Columns: {list(base.columns)}")
 
     df = base[[name_col, price_col, dely_col]].copy()
     df.columns = ["Company Name", "Last Price", "Dely %"]
@@ -121,8 +106,7 @@ def fetch_delivery_table() -> pd.DataFrame:
     df["Last Price"] = pd.to_numeric(df["Last Price"], errors="coerce")
     df["Dely %"] = pd.to_numeric(df["Dely %"], errors="coerce")
 
-    df = df.dropna(subset=["Last Price", "Dely %"]).reset_index(drop=True)
-    return df
+    return df.dropna(subset=["Last Price", "Dely %"]).reset_index(drop=True)
 
 def select_high_delivery(df: pd.DataFrame) -> pd.DataFrame:
     out = df[df["Dely %"] >= DELIVERY_THRESHOLD].sort_values("Dely %", ascending=False)
@@ -379,7 +363,6 @@ def main():
         log(f"OpenAI → {stock} (CMP ₹{last_price}, Dely {dely}%)")
         try:
             res = analyze_via_openai(client, prompt)
-            # Ensure stock name present
             res.setdefault("meta", {})["stock"] = res.get("meta", {}).get("stock") or stock
             results.append(res)
             time.sleep(0.7)
