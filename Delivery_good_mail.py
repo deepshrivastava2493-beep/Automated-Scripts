@@ -35,8 +35,8 @@ API_RETRY_SLEEP = float(os.getenv("API_RETRY_SLEEP", "2.0"))
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "40"))
 DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
 
-SENDER_EMAIL = os.getenv("SENDER_EMAIL", "")
-RECEIVER_EMAILS = [e.strip() for e in os.getenv("RECEIVER_EMAILS", "").split(",") if e.strip()]
+SENDER_EMAIL = "deepshrivastava2493@gmail.com"
+RECEIVER_EMAILS = "rockingdeep69@gmail.com"
 SMTP_HOST = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
