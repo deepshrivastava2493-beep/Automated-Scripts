@@ -12,10 +12,11 @@ from datetime import datetime
 
 # ---- CONFIG ----
 DELIVERY_THRESHOLD = 85
-openai_api_key = "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"
+openai_api_key = os.environ.get("OPENAI_API_KEY")
+openai_api_key = os.environ.get("GMAIL_APP_PASSWORD")
 sender = "deepshrivastava2493@gmail.com"
 receivers = ["rockingdeep69@gmail.com"]
-app_password = "sjkynqkenfpfdvyo"  # Gmail App password; never your main password
+app_password = os.environ.get("GMAIL_APP_PASSWORD") # Gmail App password; never your main password
 
 # ---- Step 1: Fetch & parse delivery data ----
 url = "https://www.moneycontrol.com/india/stockmarket/stock-deliverables/marketstatistics/indices/nifty-500-7.html"
