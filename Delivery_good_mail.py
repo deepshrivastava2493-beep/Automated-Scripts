@@ -160,7 +160,7 @@ def get_json_analysis(stock_row):
         date_iso=today_iso
     )
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.1
     )
