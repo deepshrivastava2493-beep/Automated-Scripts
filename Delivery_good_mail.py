@@ -14,7 +14,6 @@ import os
 # ---- CONFIG ----
 DELIVERY_THRESHOLD = 85
 openai_api_key = os.environ.get("OPENAI_API_KEY")
-openai_api_key = os.environ.get("GMAIL_APP_PASSWORD")
 sender = "deepshrivastava2493@gmail.com"
 receivers = ["rockingdeep69@gmail.com"]
 app_password = os.environ.get("GMAIL_APP_PASSWORD") # Gmail App password; never your main password
