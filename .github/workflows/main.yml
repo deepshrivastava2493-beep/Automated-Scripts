@@ -3,12 +3,16 @@ name: Daily Stock Delivery Alert
 on:
   schedule:
     - cron: '30 0 * * *'   # 6:00 AM IST daily
-  workflow_dispatch:  # Manual testing
+  workflow_dispatch:  # Manual trigger for testing
 
 jobs:
   send-delivery-alert:
     runs-on: ubuntu-latest
     
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -21,12 +25,10 @@ jobs:
     
     - name: Install dependencies
       run: |
-        pip install --upgrade pip
+        python -m pip install --upgrade pip
         pip install -r requirements.txt
 
     - name: Run new delivery script with good mail
-      env:
-        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       run: |
         echo "🚀 Starting new delivery script..."
         python Delivery_good_mail.py
