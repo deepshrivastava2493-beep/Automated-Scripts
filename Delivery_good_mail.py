@@ -15,7 +15,7 @@ import os
 DELIVERY_THRESHOLD = 85
 openai_api_key = os.getenv("OPENAI_API_KEY")  # ← replace (or read from env)
 sender = "deepshrivastava2493@gmail.com"
-receivers = ["rockingdeep69@gmail.com"]
+receivers = ["rockingdeep69@gmail.com","akhileshekka@gmail.com"]
 app_password = os.getenv("GMAIL_APP_PASSWORD") # Gmail App password; never your main password
 
 # ---- Step 1: Fetch & parse delivery data ----
