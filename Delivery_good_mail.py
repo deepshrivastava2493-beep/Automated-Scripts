@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 from datetime import datetime
+import os
 
 # ---- CONFIG ----
 DELIVERY_THRESHOLD = 85
