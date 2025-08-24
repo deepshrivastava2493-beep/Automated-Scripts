@@ -39,3 +39,12 @@ jobs:
         echo "🚀 Starting new delivery script..."
         python Delivery_new.py
         echo "✅ New script execution completed"
+
+
+    - name: Run new delivery script with good mail
+      env:
+        GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      run: |
+        echo "🚀 Starting new delivery script..."
+        python Delivery_good_mail.py
+        echo "✅ New script execution completed"
